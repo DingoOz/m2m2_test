@@ -12,6 +12,7 @@
 #include <iomanip>
 #include <fstream>
 #include <nlohmann/json.hpp>
+#include <cmath>
 
 class SlamtecMapper {
 private:
@@ -45,7 +46,6 @@ private:
             std::cerr << "Send failed: " << strerror(errno) << std::endl;
             return false;
         }
-        std::cout << "Sent: " << json_str << std::endl;
         return true;
     }
 
@@ -81,6 +81,13 @@ private:
             std::cerr << "JSON parse error: " << e.what() << std::endl;
             return {};
         }
+    }
+
+    std::vector<std::tuple<float, float, bool>> decodeLaserPoints(const std::string& base64_encoded) {
+        // Placeholder for actual base64 and RLE decoding
+        // In a real implementation, you'd need to add base64 decoding and RLE decompression
+        std::vector<std::tuple<float, float, bool>> points;
+        return points;
     }
 
 public:
@@ -127,11 +134,31 @@ public:
         return receiveResponse();
     }
 
-    nlohmann::json getDeviceInfo() {
-        if (!sendRequest("getdeviceinfo")) {
-            return {};
+    void continuousLaserScan() {
+        while (true) {
+            auto scan_response = getLaserScan();
+            
+            if (scan_response.empty() || 
+                scan_response["result"].is_null() || 
+                !scan_response["result"].contains("laser_points")) {
+                std::cerr << "Failed to get laser scan" << std::endl;
+                sleep(1);
+                continue;
+            }
+
+            // Get base64 encoded laser points
+            std::string base64_points = scan_response["result"]["laser_points"];
+            
+            // Print some basic information
+            std::cout << "Laser Scan:" << std::endl;
+            std::cout << "Base64 Encoded Points Length: " << base64_points.length() << std::endl;
+            
+            // In a real implementation, you'd decode base64 and RLE here
+            // This is a placeholder for actual decoding
+            
+            // Wait a bit before next scan
+            sleep(1);
         }
-        return receiveResponse();
     }
 };
 
@@ -146,17 +173,8 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Get laser scan
-    auto laser_scan = client.getLaserScan();
-    if (!laser_scan.empty()) {
-        std::cout << "Laser scan received: " << laser_scan.dump(2) << std::endl;
-    }
-
-    // Get device info
-    auto device_info = client.getDeviceInfo();
-    if (!device_info.empty()) {
-        std::cout << "Device info: " << device_info.dump(2) << std::endl;
-    }
+    // Continuously get laser scans
+    client.continuousLaserScan();
 
     client.disconnect();
     return 0;
