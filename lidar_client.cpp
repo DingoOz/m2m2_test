@@ -13,6 +13,33 @@
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <cmath>
+#include <cstdint>
+#include <iomanip>
+#include <openssl/bio.h>
+#include <openssl/evp.h>
+
+class Base64Decoder {
+public:
+    static std::vector<uint8_t> decode(const std::string& encoded) {
+        BIO *bio, *b64;
+        std::vector<uint8_t> decoded;
+        
+        b64 = BIO_new(BIO_f_base64());
+        bio = BIO_new_mem_buf(encoded.c_str(), encoded.length());
+        bio = BIO_push(b64, bio);
+        
+        BIO_set_flags(bio, BIO_FLAGS_BASE64_NO_NL);
+        
+        char buffer[1024];
+        int len;
+        while ((len = BIO_read(bio, buffer, sizeof(buffer))) > 0) {
+            decoded.insert(decoded.end(), buffer, buffer + len);
+        }
+        
+        BIO_free_all(bio);
+        return decoded;
+    }
+};
 
 class SlamtecMapper {
 private:
@@ -63,7 +90,6 @@ private:
 
             received.insert(received.end(), buffer.begin(), buffer.begin() + bytes);
             
-            // Check for end delimiter
             if (received.size() >= 4 && 
                 received[received.size()-4] == '\r' &&
                 received[received.size()-3] == '\n' &&
@@ -73,7 +99,6 @@ private:
             }
         }
 
-        // Convert to string and parse JSON
         std::string response_str(received.begin(), received.end());
         try {
             return nlohmann::json::parse(response_str);
@@ -84,9 +109,63 @@ private:
     }
 
     std::vector<std::tuple<float, float, bool>> decodeLaserPoints(const std::string& base64_encoded) {
-        // Placeholder for actual base64 and RLE decoding
-        // In a real implementation, you'd need to add base64 decoding and RLE decompression
         std::vector<std::tuple<float, float, bool>> points;
+        
+        // Decode base64
+        std::vector<uint8_t> decoded = Base64Decoder::decode(base64_encoded);
+        
+        // Check for RLE header
+        if (decoded.size() < 9 || 
+            decoded[0] != 'R' || 
+            decoded[1] != 'L' || 
+            decoded[2] != 'E') {
+            std::cerr << "Invalid RLE header" << std::endl;
+            return points;
+        }
+
+        // RLE decompression (simplified)
+        std::vector<uint8_t> decompressed;
+        uint8_t sentinel1 = decoded[3];
+        uint8_t sentinel2 = decoded[4];
+        
+        size_t pos = 9;
+        while (pos < decoded.size()) {
+            uint8_t b = decoded[pos];
+            
+            if (b == sentinel1) {
+                if (pos + 2 < decoded.size() && 
+                    decoded[pos+1] == 0 && 
+                    decoded[pos+2] == sentinel2) {
+                    // Swap sentinels
+                    std::swap(sentinel1, sentinel2);
+                    pos += 2;
+                } else if (pos + 2 < decoded.size()) {
+                    // Repeat next byte
+                    uint8_t repeat_val = decoded[pos+2];
+                    uint8_t repeat_count = decoded[pos+1];
+                    for (uint8_t i = 0; i < repeat_count; ++i) {
+                        decompressed.push_back(repeat_val);
+                    }
+                    pos += 2;
+                }
+            } else {
+                decompressed.push_back(b);
+            }
+            ++pos;
+        }
+
+        // Parse points (12 bytes each: float distance, float angle, short flags, short reserved)
+        for (size_t i = 0; i < decompressed.size(); i += 12) {
+            if (i + 12 > decompressed.size()) break;
+
+            float distance, angle;
+            memcpy(&distance, &decompressed[i], sizeof(float));
+            memcpy(&angle, &decompressed[i+4], sizeof(float));
+
+            bool valid = distance != 100000.0;
+            points.emplace_back(angle, distance, valid);
+        }
+
         return points;
     }
 
@@ -149,12 +228,25 @@ public:
             // Get base64 encoded laser points
             std::string base64_points = scan_response["result"]["laser_points"];
             
-            // Print some basic information
-            std::cout << "Laser Scan:" << std::endl;
-            std::cout << "Base64 Encoded Points Length: " << base64_points.length() << std::endl;
+            // Decode points
+            auto points = decodeLaserPoints(base64_points);
             
-            // In a real implementation, you'd decode base64 and RLE here
-            // This is a placeholder for actual decoding
+            // Print point details
+            std::cout << "Laser Scan Points:" << std::endl;
+            std::cout << "Total Points: " << points.size() << std::endl;
+            
+            for (const auto& [angle, distance, valid] : points) {
+                std::cout << "Angle: " << std::fixed << std::setprecision(4) 
+                          << angle << " rad (" 
+                          << std::fixed << std::setprecision(2) 
+                          << (angle * 180.0 / M_PI) << "°), "
+                          << "Distance: " << std::fixed << std::setprecision(4) 
+                          << distance << "m, "
+                          << "Valid: " << (valid ? "Yes" : "No") 
+                          << std::endl;
+            }
+            
+            std::cout << std::endl;
             
             // Wait a bit before next scan
             sleep(1);
