@@ -14,7 +14,6 @@
 #include <nlohmann/json.hpp>
 #include <cmath>
 #include <cstdint>
-#include <iomanip>
 #include <openssl/bio.h>
 #include <openssl/evp.h>
 
@@ -44,7 +43,7 @@ public:
 class SlamtecMapper {
 private:
     int sockfd_;
-    int request_id_ = 0;
+    int request_id_;
     static constexpr const char* REQUEST_DELIM = "\r\n\r\n";
 
     bool sendRequest(const std::string& command, const nlohmann::json& args = nullptr) {
@@ -170,7 +169,7 @@ private:
     }
 
 public:
-    SlamtecMapper() : sockfd_(-1) {}
+    SlamtecMapper() : sockfd_(-1), request_id_(0) {}
     ~SlamtecMapper() { disconnect(); }
 
     bool connect(const std::string& host, int port) {
@@ -231,22 +230,24 @@ public:
             // Decode points
             auto points = decodeLaserPoints(base64_points);
             
-            // Print point details
-            std::cout << "Laser Scan Points:" << std::endl;
-            std::cout << "Total Points: " << points.size() << std::endl;
-            
+            // Output in ROS2-like LaserScan format
+            std::cout << "sensor_msgs/LaserScan:" << std::endl;
+            std::cout << "  header:" << std::endl;
+            std::cout << "    stamp: " << std::fixed << std::setprecision(9) << scan_response["result"]["timestamp"] << std::endl;
+            std::cout << "    frame_id: base_link" << std::endl;
+            std::cout << "  angle_min: " << std::fixed << std::setprecision(4) << std::get<0>(points.front()) << " rad" << std::endl;
+            std::cout << "  angle_max: " << std::fixed << std::setprecision(4) << std::get<0>(points.back()) << " rad" << std::endl;
+            std::cout << "  angle_increment: " << std::fixed << std::setprecision(4) << (std::get<0>(points.back()) - std::get<0>(points.front())) / (points.size() - 1) << " rad" << std::endl;
+            std::cout << "  time_increment: 0.0" << std::endl;
+            std::cout << "  scan_time: 0.0" << std::endl;
+            std::cout << "  range_min: 0.0" << std::endl;
+            std::cout << "  range_max: 100.0" << std::endl;
+            std::cout << "  ranges: [";
             for (const auto& [angle, distance, valid] : points) {
-                std::cout << "Angle: " << std::fixed << std::setprecision(4) 
-                          << angle << " rad (" 
-                          << std::fixed << std::setprecision(2) 
-                          << (angle * 180.0 / M_PI) << "°), "
-                          << "Distance: " << std::fixed << std::setprecision(4) 
-                          << distance << "m, "
-                          << "Valid: " << (valid ? "Yes" : "No") 
-                          << std::endl;
+                std::cout << (valid ? distance : 0.0) << ", ";
             }
-            
-            std::cout << std::endl;
+            std::cout << "]" << std::endl;
+            std::cout << "  intensities: []" << std::endl << std::endl;
             
             // Wait a bit before next scan
             sleep(1);
@@ -265,9 +266,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Continuously get laser scans
     client.continuousLaserScan();
-
     client.disconnect();
     return 0;
 }
